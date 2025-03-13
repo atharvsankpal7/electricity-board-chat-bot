@@ -33,5 +33,6 @@ export async function analyzeConversation(text: string) {
       }
     ]
   });
-  return JSON.parse(response.choices[0].message.content);
+  const content = response.choices[0].message.content;
+  return content ? JSON.parse(content) : null;
 }

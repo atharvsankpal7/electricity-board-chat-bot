@@ -2,7 +2,6 @@
 
 import "regenerator-runtime/runtime";
 import { useEffect, useState, useCallback, useRef } from "react";
-import dynamic from "next/dynamic";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,7 +31,6 @@ export function VoiceChat({ onAddressExtracted }: VoiceChatProps) {
   const [conversationState, setConversationState] = useState<
     "initial" | "waitingForIssue" | "waitingForAddress"
   >("initial");
-  const [userIssue, setUserIssue] = useState("");
   const [processingTranscript, setProcessingTranscript] = useState(false);
 
   const speechSynthesis = useRef<SpeechSynthesis | null>(null);
@@ -72,7 +70,6 @@ export function VoiceChat({ onAddressExtracted }: VoiceChatProps) {
 
           if (preferredVoice) {
             utterance.voice = preferredVoice;
-            console.log("Selected voice:", preferredVoice.name);
           }
 
           utterance.onstart = () => {
@@ -82,8 +79,10 @@ export function VoiceChat({ onAddressExtracted }: VoiceChatProps) {
 
           utterance.onend = () => {
             setIsResponding(false);
-            SpeechRecognition.startListening({ continuous: true });
-            setIsListening(true);
+            if (!text.includes("send someone to help you shortly")) {
+              SpeechRecognition.startListening({ continuous: true });
+              setIsListening(true);
+            }
             setProcessingTranscript(false);
           };
 
@@ -103,15 +102,12 @@ export function VoiceChat({ onAddressExtracted }: VoiceChatProps) {
         }
       }
     },
-    [conversationState]
+    []
   );
 
   const endCall = useCallback((reason: string) => {
     setIsListening(false);
-    import("react-speech-recognition").then((module) => {
-      const SpeechRecognition = module.default;
-      SpeechRecognition.stopListening();
-    });
+    SpeechRecognition.stopListening();
     if (speechSynthesis.current) {
       speechSynthesis.current.cancel();
     }
@@ -120,18 +116,55 @@ export function VoiceChat({ onAddressExtracted }: VoiceChatProps) {
     setProcessingTranscript(false);
   }, []);
 
-  const resetAll = useCallback(() => {
-    setIsListening(false);
-    setTimer(180);
-    setConversationState("initial");
-    setUserIssue("");
-    resetTranscript();
-    if (speechSynthesis.current) {
-      speechSynthesis.current.cancel();
+  const processTranscript = async (text: string) => {
+    try {
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text }),
+      });
+
+      const data = await response.json();
+      
+      // Speak the response from the backend
+      speak(data.response);
+
+      // If an address was found, handle it and end the call
+      if (data.address) {
+        onAddressExtracted(data.address);
+        endCall("Address verified and complaint registered");
+      } else if (conversationState === "waitingForIssue") {
+        setConversationState("waitingForAddress");
+      }
+      
+      resetTranscript();
+      setProcessingTranscript(false);
+    } catch (error) {
+      console.error("Error analyzing text:", error);
+      speak("Sorry, there was an error processing your request. Please try again.");
+      resetTranscript();
+      setProcessingTranscript(false);
     }
-    SpeechRecognition.stopListening();
-    setProcessingTranscript(false);
-  }, [resetTranscript]);
+  };
+
+  const toggleListening = useCallback(() => {
+    if (isListening) {
+      endCall("Call ended by user");
+    } else {
+      resetTranscript();
+      setConversationState("waitingForIssue");
+      speak("Hello, you've reached the electricity complaint helpline. How can I assist you today?");
+    }
+  }, [isListening, speak, resetTranscript, endCall]);
+
+  const handleSubmitResponse = useCallback(() => {
+    if (!isListening || isResponding || processingTranscript || !transcript.trim()) return;
+    
+    setProcessingTranscript(true);
+    processTranscript(transcript);
+  }, [isListening, isResponding, processingTranscript, transcript]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -150,68 +183,6 @@ export function VoiceChat({ onAddressExtracted }: VoiceChatProps) {
 
     return () => clearInterval(interval);
   }, [isListening, timer, endCall]);
-
-  const processAddress = async (text: string) => {
-    try {
-      console.log("Processing address:", text);
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ text }),
-      });
-
-      const data = await response.json();
-      if (data.address) {
-        onAddressExtracted(data.address);
-        speak(
-          "Thank you for providing your address. We'll send someone to help you shortly."
-        );
-        endCall("Address verified and complaint registered");
-      } else {
-        speak(data.response);
-        resetTranscript();
-        setProcessingTranscript(false);
-      }
-    } catch (error) {
-      console.error("Error analyzing text:", error);
-      speak(
-        "Sorry, there was an error processing your address. Please try again."
-      );
-      resetTranscript();
-      setProcessingTranscript(false);
-    }
-  };
-
-  const toggleListening = useCallback(() => {
-    if (isListening) {
-      endCall("Call ended by user");
-    } else {
-      resetTranscript();
-      setConversationState("waitingForIssue");
-      const greeting =
-        "Hello, you've reached the electricity complaint helpline. How can I assist you today?";
-      speak(greeting);
-    }
-  }, [isListening, speak, resetTranscript, endCall]);
-
-  // Handle manual submission of response
-  const handleSubmitResponse = useCallback(() => {
-    if (!isListening || isResponding || processingTranscript) return;
-    
-    setProcessingTranscript(true);
-    if (conversationState === "waitingForIssue") {
-      setUserIssue(transcript);
-      speak(
-        "Thank you for explaining the issue. Could you please provide your address?"
-      );
-      setConversationState("waitingForAddress");
-      resetTranscript();
-    } else if (conversationState === "waitingForAddress") {
-      processAddress(transcript);
-    }
-  }, [isListening, isResponding, processingTranscript, conversationState, transcript, speak, resetTranscript]);
 
   if (!isClient) {
     return null;
