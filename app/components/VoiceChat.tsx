@@ -114,6 +114,7 @@ export function VoiceChat({ onAddressExtracted }: VoiceChatProps) {
     setEndReason(reason);
     setShowEndDialog(true);
     setProcessingTranscript(false);
+    setTimer(180);
   }, []);
 
   const processTranscript = async (text: string) => {

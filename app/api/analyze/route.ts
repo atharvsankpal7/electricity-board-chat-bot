@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   try {
+    console.log('Received request to analyze conversation');
     const { text } = await request.json();
     let analysis = await analyzeConversation(text);
     console.log('Analysis:', analysis);
